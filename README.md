@@ -80,7 +80,7 @@ https://example.com/comic/chapter-3/
 For websites requiring authentication or cookie consent:
 
 ### Chrome/Edge
-1. Install [Get cookies.txt LOCALLY](https://chrome.google.com/webstore) extension
+1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) extension
 2. Visit the website and log in
 3. Click the extension icon and export cookies
 4. Save the cookies.txt file
