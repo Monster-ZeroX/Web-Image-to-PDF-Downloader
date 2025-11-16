@@ -23,14 +23,14 @@ A powerful Python script that downloads images from webpages and combines them i
 No manual installation required! Just run the script and it will automatically install missing dependencies:
 
 ```bash
-python image_to_pdf_downloader.py
+python3 image_to_pdf_downloader.py
 ```
 
 ### Option 2: Manual Installation
 Install dependencies manually:
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ## Usage
@@ -39,7 +39,7 @@ pip install -r requirements.txt
 
 1. Run the script:
 ```bash
-python image_to_pdf_downloader.py
+python3 image_to_pdf_downloader.py
 ```
 
 2. Select mode 1 (Single download)
