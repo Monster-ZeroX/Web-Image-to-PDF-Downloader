@@ -159,7 +159,7 @@ class ImageToPDFDownloader:
             sys.exit(1)
 
     def extract_images(self, html_content):
-        """Extract image URLs from HTML content."""
+        """Extract image URLs from HTML content with multiple strategies."""
         soup = BeautifulSoup(html_content, 'html.parser')
 
         # Extract page title
@@ -171,21 +171,252 @@ class ImageToPDFDownloader:
 
         print(f"Page title: {self.page_title}")
 
-        # Find all img tags with data-src attribute
-        img_tags = soup.find_all('img', {'data-src': True})
+        # Check if this is a paginated gallery (one image per page)
+        if self.is_paginated_gallery(html_content):
+            print("🔍 Detected paginated gallery (one image per page)")
+            return self.extract_paginated_images(html_content)
 
-        if not img_tags:
-            # Fallback: try regular src attribute
+        image_urls = []
+
+        # Strategy 1: Check for noscript tags (common for JavaScript galleries)
+        noscript_tags = soup.find_all('noscript')
+        for noscript in noscript_tags:
+            noscript_soup = BeautifulSoup(str(noscript), 'html.parser')
+            noscript_imgs = noscript_soup.find_all('img', {'src': True})
+            for img in noscript_imgs:
+                src = img.get('src')
+                if src and self.is_image_url(src.strip()):
+                    image_urls.append(src.strip())
+
+        # Strategy 2: Find all img tags with data-src attribute
+        if not image_urls:
+            img_tags = soup.find_all('img', {'data-src': True})
+            for img in img_tags:
+                src = img.get('data-src')
+                if src and self.is_image_url(src.strip()):
+                    image_urls.append(src.strip())
+
+        # Strategy 3: Fallback to regular src attribute
+        if not image_urls:
             img_tags = soup.find_all('img', {'src': True})
-            image_urls = [img.get('src') for img in img_tags if img.get('src')]
-        else:
-            image_urls = [img.get('data-src') for img in img_tags if img.get('data-src')]
+            for img in img_tags:
+                src = img.get('src')
+                if src and self.is_image_url(src.strip()):
+                    image_urls.append(src.strip())
 
-        # Filter to only image URLs
-        image_urls = [url.strip() for url in image_urls if self.is_image_url(url.strip())]
+        # Clean URLs to get full-size images
+        image_urls = [self.clean_image_url(url) for url in image_urls]
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in image_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+
+        image_urls = unique_urls
+
+        # Smart sort: Try to maintain numerical order
+        image_urls = self.smart_sort_images(image_urls)
 
         print(f"Found {len(image_urls)} images")
         return image_urls
+
+    def is_paginated_gallery(self, html_content):
+        """Detect if this is a paginated gallery (one image per page with Next/Previous buttons)."""
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Look for pagination indicators
+        pagination_indicators = [
+            'Next Image',
+            'Previous Image',
+            'pagGaleria',
+            'next-page',
+            'prev-page',
+        ]
+
+        text_content = html_content.lower()
+        for indicator in pagination_indicators:
+            if indicator.lower() in text_content:
+                return True
+
+        # Look for navigation controls
+        nav_divs = soup.find_all('div', {'id': re.compile(r'control', re.I)})
+        if nav_divs:
+            return True
+
+        return False
+
+    def extract_paginated_images(self, html_content):
+        """Extract images from paginated gallery by crawling through all pages."""
+        print("📖 Crawling paginated gallery...")
+
+        all_image_urls = []
+        visited_urls = set()
+        current_url = self.url
+
+        # Parse the initial page structure to understand the URL pattern
+        base_pattern = self.detect_url_pattern(current_url)
+
+        page_number = 1
+        max_pages = 200  # Safety limit
+
+        while page_number <= max_pages and current_url and current_url not in visited_urls:
+            print(f"\n  📄 Page {page_number}: {current_url}")
+            visited_urls.add(current_url)
+
+            try:
+                # Fetch the page
+                if current_url == self.url:
+                    # Use already fetched content for first page
+                    page_html = html_content
+                else:
+                    response = self.session.get(current_url, timeout=30)
+                    response.raise_for_status()
+                    page_html = response.text
+
+                soup = BeautifulSoup(page_html, 'html.parser')
+
+                # Extract the main image from this page
+                image_url = self.extract_main_image(soup)
+                if image_url:
+                    all_image_urls.append(image_url)
+                    print(f"    ✓ Found image: {image_url.split('/')[-1][:50]}")
+                else:
+                    print(f"    ⚠ No image found on this page")
+
+                # Find the "Next" link
+                next_url = self.find_next_page_url(soup, current_url)
+
+                if not next_url or next_url in visited_urls:
+                    print(f"\n✓ Reached end of gallery at page {page_number}")
+                    break
+
+                current_url = next_url
+                page_number += 1
+
+                # Small delay to be respectful
+                time.sleep(0.3)
+
+            except Exception as e:
+                print(f"    ✗ Error on page {page_number}: {e}")
+                break
+
+        print(f"\n📊 Total pages crawled: {page_number}")
+        print(f"📊 Total images found: {len(all_image_urls)}")
+
+        return all_image_urls
+
+    def detect_url_pattern(self, url):
+        """Detect the URL pattern for pagination."""
+        # Extract base URL without the page number
+        # Example: /comic/chapter-01/ or /comic/chapter-01-page-5/
+        match = re.search(r'(.*?)(-\d+)?/?$', url)
+        if match:
+            return match.group(1)
+        return url
+
+    def extract_main_image(self, soup):
+        """Extract the main/primary image from a single page."""
+        # Try multiple strategies to find the main image
+
+        # Strategy 1: Look for images in main content area
+        main_content = soup.find(['div', 'article'], {'id': re.compile(r'content|main|comic|image', re.I)})
+        if main_content:
+            img = main_content.find('img', {'src': True})
+            if img and self.is_image_url(img.get('src', '').strip()):
+                return self.clean_image_url(img.get('src').strip())
+
+        # Strategy 2: Look for images with specific classes
+        img = soup.find('img', {'class': re.compile(r'main|comic|content|gallery|primary', re.I), 'src': True})
+        if img and self.is_image_url(img.get('src', '').strip()):
+            return self.clean_image_url(img.get('src').strip())
+
+        # Strategy 3: Find the largest image (likely the main content)
+        all_imgs = soup.find_all('img', {'src': True})
+        candidate_images = []
+
+        for img in all_imgs:
+            src = img.get('src', '').strip()
+            if not src or not self.is_image_url(src):
+                continue
+
+            # Skip common UI elements
+            if any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'button', 'banner', 'ad', 'thumb']):
+                continue
+
+            # Check for size hints in attributes
+            width = img.get('width', '')
+            height = img.get('height', '')
+
+            try:
+                size_score = 0
+                if width and width.isdigit():
+                    size_score += int(width)
+                if height and height.isdigit():
+                    size_score += int(height)
+
+                candidate_images.append((size_score, src))
+            except:
+                candidate_images.append((0, src))
+
+        if candidate_images:
+            # Sort by size score and return the largest
+            candidate_images.sort(key=lambda x: x[0], reverse=True)
+            return self.clean_image_url(candidate_images[0][1])
+
+        return None
+
+    def find_next_page_url(self, soup, current_url):
+        """Find the URL of the next page in pagination."""
+        # Strategy 1: Look for links with "Next" text
+        next_keywords = ['next image', 'next page', 'next >>', '>>']
+
+        for keyword in next_keywords:
+            links = soup.find_all('a', string=re.compile(keyword, re.I))
+            for link in links:
+                href = link.get('href')
+                if href:
+                    return self.normalize_url(href, current_url)
+
+        # Strategy 2: Look for links inside elements with "next" classes
+        next_elements = soup.find_all(['a', 'span'], {'class': re.compile(r'next|pagGaleria', re.I)})
+        for elem in next_elements:
+            if elem.name == 'a':
+                href = elem.get('href')
+                if href:
+                    return self.normalize_url(href, current_url)
+            else:
+                # Check parent
+                parent = elem.find_parent('a')
+                if parent:
+                    href = parent.get('href')
+                    if href:
+                        return self.normalize_url(href, current_url)
+
+        # Strategy 3: Look for numbered pagination (increment current page number)
+        match = re.search(r'(.*?)[-/](\d+)/?$', current_url)
+        if match:
+            base_url = match.group(1)
+            current_page = int(match.group(2))
+            next_page = current_page + 1
+
+            # Try to verify if next page exists by looking for it in the HTML
+            potential_next = f"{base_url}-{next_page:02d}/" if current_page < 10 else f"{base_url}-{next_page}/"
+            if potential_next in soup.get_text() or any(potential_next in str(a) for a in soup.find_all('a')):
+                return potential_next
+
+        return None
+
+    def normalize_url(self, href, current_url):
+        """Convert relative URL to absolute URL."""
+        if href.startswith('http://') or href.startswith('https://'):
+            return href
+
+        # Parse current URL to get base
+        from urllib.parse import urljoin
+        return urljoin(current_url, href)
 
     def detect_related_chapters(self, html_content):
         """Detect related chapters/parts of the same story from select dropdown."""
@@ -247,6 +478,79 @@ class ImageToPDFDownloader:
         """Check if URL points to an image."""
         image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
         return any(url.lower().endswith(ext) for ext in image_extensions)
+
+    def clean_image_url(self, url):
+        """Clean image URL to get full-size version."""
+        # Remove common image resizing paths
+        # Example: /styles/juicebox_medium/public/ -> /
+        url = re.sub(r'/styles/[^/]+/public/', '/', url)
+
+        # Remove query parameters that might cause issues (keep the base URL)
+        # But preserve the essential parts like itok for authentication
+        if '?' in url:
+            base_url = url.split('?')[0]
+            # Check if there's an itok parameter (image token for Drupal sites)
+            itok_match = re.search(r'[?&]itok=([^&]+)', url)
+            if itok_match:
+                url = f"{base_url}?itok={itok_match.group(1)}"
+            else:
+                url = base_url
+
+        return url
+
+    def extract_number_from_filename(self, url):
+        """Extract number from filename for sorting."""
+        # Get the filename from URL
+        filename = url.split('/')[-1].split('?')[0]
+
+        # Try to find numbers in the filename
+        # Pattern 1: Leading numbers like "01_", "001_", "1_"
+        match = re.search(r'^(\d+)[\W_]', filename)
+        if match:
+            return int(match.group(1))
+
+        # Pattern 2: Numbers after underscore like "_01.", "_001.", "_1."
+        match = re.search(r'[\W_](\d+)\.', filename)
+        if match:
+            return int(match.group(1))
+
+        # Pattern 3: Any number in the filename
+        match = re.search(r'(\d+)', filename)
+        if match:
+            return int(match.group(1))
+
+        # No number found
+        return float('inf')
+
+    def smart_sort_images(self, image_urls):
+        """Sort images intelligently based on numbers in filenames."""
+        if not image_urls:
+            return image_urls
+
+        # Check if URLs contain numbers that suggest ordering
+        urls_with_numbers = []
+        for url in image_urls:
+            number = self.extract_number_from_filename(url)
+            urls_with_numbers.append((number, url))
+
+        # Sort by extracted number
+        urls_with_numbers.sort(key=lambda x: x[0])
+
+        # Extract sorted URLs
+        sorted_urls = [url for _, url in urls_with_numbers]
+
+        # Debug: Show sorting
+        print(f"📊 Image ordering detected:")
+        for idx, (num, url) in enumerate(urls_with_numbers[:5], 1):
+            filename = url.split('/')[-1].split('?')[0]
+            if num != float('inf'):
+                print(f"  [{idx}] Number: {num:3d} - {filename[:50]}...")
+            else:
+                print(f"  [{idx}] No number - {filename[:50]}...")
+        if len(urls_with_numbers) > 5:
+            print(f"  ... and {len(urls_with_numbers) - 5} more images")
+
+        return sorted_urls
 
     def download_images(self, image_urls):
         """Download all images using multi-threading for speed."""
