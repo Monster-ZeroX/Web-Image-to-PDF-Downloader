@@ -23,14 +23,14 @@ A powerful Python script that downloads images from webpages and combines them i
 No manual installation required! Just run the script and it will automatically install missing dependencies:
 
 ```bash
-python image_to_pdf_downloader.py
+python3 image_to_pdf_downloader.py
 ```
 
 ### Option 2: Manual Installation
 Install dependencies manually:
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ## Usage
@@ -39,7 +39,7 @@ pip install -r requirements.txt
 
 1. Run the script:
 ```bash
-python image_to_pdf_downloader.py
+python3 image_to_pdf_downloader.py
 ```
 
 2. Select mode 1 (Single download)
@@ -80,7 +80,7 @@ https://example.com/comic/chapter-3/
 For websites requiring authentication or cookie consent:
 
 ### Chrome/Edge
-1. Install [Get cookies.txt LOCALLY](https://chrome.google.com/webstore) extension
+1. Install [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) extension
 2. Visit the website and log in
 3. Click the extension icon and export cookies
 4. Save the cookies.txt file
